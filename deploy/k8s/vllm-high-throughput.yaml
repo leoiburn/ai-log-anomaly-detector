@@ -1,0 +1,136 @@
+# Production High-Throughput vLLM Serving Manifest for Agent Clusters
+# Implements all 5 Token/Second Optimizations:
+# 1. Continuous Batching & Chunked Prefill (--enable-chunked-prefill, --max-num-seqs, --max-num-batched-tokens)
+# 2. Automatic Prefix Caching (--enable-prefix-caching) for agent tool & system prompt reuse
+# 3. Quantization (--quantization awq / fp8) for 2x memory bandwidth utilization
+# 4. Topology & Interconnect Awareness (IPC /dev/shm, NCCL NVLink/PCIe tuning)
+# 5. FlashAttention / FlashInfer Kernels (--attention-backend FLASHINFER / FLASH_ATTN, PagedAttention)
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-agent-serving
+  namespace: agent-workloads
+  labels:
+    app: vllm-agent-serving
+spec:
+  type: ClusterIP
+  ports:
+    - name: http-openai
+      port: 8000
+      targetPort: 8000
+  selector:
+    app: vllm-agent-serving
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-agent-serving
+  namespace: agent-workloads
+  labels:
+    app: vllm-agent-serving
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-agent-serving
+  template:
+    metadata:
+      labels:
+        app: vllm-agent-serving
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: vllm-engine
+          image: vllm/vllm-openai:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            # Model target (e.g. Qwen2.5-Coder-32B-Instruct-AWQ or DeepSeek-R1-Distill)
+            - "--model"
+            - "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ"
+
+            # Optimization 1: Continuous Batching & Chunked Prefill
+            - "--enable-chunked-prefill"
+            - "true"
+            - "--max-num-batched-tokens"
+            - "4096"
+            - "--max-num-seqs"
+            - "128"
+
+            # Optimization 2: Automatic Prefix Caching (APC) for Agents
+            - "--enable-prefix-caching"
+
+            # Optimization 3: Quantization (AWQ for 4-bit / FP8 on Hopper/Ada)
+            - "--quantization"
+            - "awq"
+
+            # Optimization 4: GPU Topology & Parallelism (Adjust TP to NVLink boundary)
+            - "--tensor-parallel-size"
+            - "2" # Set to number of GPUs sharing an NVLink domain (or 1 for single GPU)
+            - "--gpu-memory-utilization"
+            - "0.92"
+
+            # Optimization 5: Attention Kernels & PagedAttention
+            - "--attention-backend"
+            - "FLASHINFER" # Falls back to FLASH_ATTN automatically if FlashInfer is unavailable
+            - "--block-size"
+            - "16" # PagedAttention block allocation size
+
+            # Network & Server
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+            - "--disable-log-requests"
+          env:
+            # Topology & NCCL multi-GPU optimization
+            - name: NCCL_DEBUG
+              value: "WARN"
+            - name: NCCL_IB_DISABLE
+              value: "0" # Set to 0 if InfiniBand/RoCE is available, 1 for pure Ethernet
+            - name: NCCL_P2P_DISABLE
+              value: "0" # Enables direct NVLink/PCIe peer-to-peer communication
+            - name: CUDA_DEVICE_ORDER
+              value: "PCI_BUS_ID"
+            - name: VLLM_ATTENTION_BACKEND
+              value: "FLASHINFER"
+          ports:
+            - containerPort: 8000
+          resources:
+            limits:
+              nvidia.com/gpu: 2 # Number of assigned GPUs
+              cpu: "8"
+              memory: "32Gi"
+            requests:
+              nvidia.com/gpu: 2
+              cpu: "4"
+              memory: "16Gi"
+          volumeMounts:
+            # Mandatory for Tensor Parallelism inter-process PyTorch tensors
+            - name: dshm
+              mountPath: /dev/shm
+            - name: model-cache
+              mountPath: /root/.cache/huggingface
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 45
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 15
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: model-cache-pvc

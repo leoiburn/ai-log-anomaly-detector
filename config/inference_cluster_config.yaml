@@ -1,0 +1,81 @@
+# Cluster Inference Throughput Configuration Profiles
+# Comprehensive tuning guide for max Tokens/Second across GPU topologies.
+
+profiles:
+  # -------------------------------------------------------------------------
+  # Profile A: Enterprise Multi-GPU with NVLink (e.g., 4x or 8x H100 / A100)
+  # -------------------------------------------------------------------------
+  enterprise_nvlink:
+    description: "High-density NVLink cluster with NVSwitch interconnect"
+    model: "Qwen/Qwen2.5-Coder-32B-Instruct-FP8"
+    optimizations:
+      continuous_batching:
+        enable_chunked_prefill: true
+        max_num_batched_tokens: 8192
+        max_num_seqs: 256
+      prefix_caching:
+        enable_prefix_caching: true   # Caches agent tool definitions and system prompts
+      quantization:
+        format: "fp8"                 # Native FP8 hardware acceleration on Ada/Hopper
+      topology:
+        tensor_parallel_size: 4       # Matched to physical NVLink domain
+        pipeline_parallel_size: 1
+        gpu_memory_utilization: 0.94
+        ipc_shared_memory_size: "16Gi"
+        env:
+          NCCL_P2P_DISABLE: "0"
+          NCCL_IB_DISABLE: "0"
+          CUDA_DEVICE_ORDER: "PCI_BUS_ID"
+      attention:
+        backend: "FLASHINFER"         # FlashInfer kernel for high batch-size decode
+        block_size: 32
+
+  # -------------------------------------------------------------------------
+  # Profile B: Multi-GPU Over PCIe / Consumer GPUs (e.g., 2x or 4x RTX 4090 / 3090)
+  # -------------------------------------------------------------------------
+  multi_gpu_pcie:
+    description: "Multi-GPU cluster without NVLink (PCIe communication bound)"
+    model: "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ"
+    optimizations:
+      continuous_batching:
+        enable_chunked_prefill: true
+        max_num_batched_tokens: 2048   # Smaller chunk size to avoid PCIe saturation
+        max_num_seqs: 64
+      prefix_caching:
+        enable_prefix_caching: true
+      quantization:
+        format: "awq"                  # 4-bit weight quantization doubles memory bandwidth
+      topology:
+        tensor_parallel_size: 2        # Keep TP low (2 max) on PCIe to limit AllReduce latency
+        pipeline_parallel_size: 1
+        gpu_memory_utilization: 0.90
+        ipc_shared_memory_size: "8Gi"
+        env:
+          NCCL_P2P_DISABLE: "0"
+          NCCL_P2P_LEVEL: "NVL"
+          CUDA_LAUNCH_BLOCKING: "0"
+      attention:
+        backend: "FLASH_ATTN"          # FlashAttention-2
+        block_size: 16
+
+  # -------------------------------------------------------------------------
+  # Profile C: Single GPU / Workstation Node
+  # -------------------------------------------------------------------------
+  single_gpu_workstation:
+    description: "Single GPU deployment for dedicated agent workflows"
+    model: "Qwen/Qwen2.5-Coder-14B-Instruct-AWQ"
+    optimizations:
+      continuous_batching:
+        enable_chunked_prefill: true
+        max_num_batched_tokens: 1024
+        max_num_seqs: 32
+      prefix_caching:
+        enable_prefix_caching: true
+      quantization:
+        format: "awq"
+      topology:
+        tensor_parallel_size: 1        # No inter-GPU communication overhead
+        gpu_memory_utilization: 0.88
+      attention:
+        backend: "FLASH_ATTN"
+        block_size: 16
