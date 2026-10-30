@@ -1,0 +1,35 @@
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: agent-lockdown-and-anti-ddos
+  namespace: agent-workloads
+spec:
+  endpointSelector:
+    matchLabels:
+      role: ai-agent
+  egress:
+    # 1. Allow internal DNS resolution only to kube-dns
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+          rules:
+            dns:
+              - matchPattern: "*"
+
+    # 2. Restrict external internet egress strictly to HTTPS (Port 443) and allowed FQDNs
+    - toFQDNs:
+        - matchPattern: "api.openai.com"
+        - matchPattern: "api.anthropic.com"
+        - matchPattern: "*.github.com"
+        - matchPattern: "pypi.org"
+        - matchPattern: "huggingface.co"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # Port 22 (SSH), arbitrary IPs, and raw TCP/UDP are completely blocked by default-deny.

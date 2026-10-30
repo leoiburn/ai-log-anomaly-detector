@@ -1,5 +1,3 @@
-severity,anomaly_score,log_entry
-MEDIUM,-0.03,2026-10-03 09:15:17 WARNING High CPU usage detected host=app-02 cpu=91%
-HIGH,-0.0173,2026-10-03 09:16:23 ERROR Failed login attempt user=admin ip=203.0.113.77
-HIGH,-0.0726,2026-10-03 09:17:41 CRITICAL Unauthorized access denied resource=/admin source=198.51.100.8
-MEDIUM,-0.0585,2026-10-03 09:18:55 WARNING Request timeout endpoint=/api/orders duration=12000ms
+severity,anomaly_score,log_entry,laya_threat_prob,laya_suppress
+LOW,-0.0225,2026-10-03 09:07:21 INFO POST /api/cart status=201 duration=63ms,0.25,False
+HIGH,-0.0009,2026-10-03 09:18:55 WARNING Request timeout endpoint=/api/orders duration=12000ms,0.25,False

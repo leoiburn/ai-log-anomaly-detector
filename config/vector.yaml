@@ -1,0 +1,42 @@
+# Vector Log Pipeline Configuration
+# Ingests raw cluster/host logs, discards routine noise at wire speed (>100k events/sec),
+# and forwards candidate anomalies to the AI Anomaly Detector & Laya.
+
+sources:
+  cluster_logs:
+    type: "file"
+    include:
+      - "/var/log/containers/*.log"
+      - "/var/log/syslog"
+
+transforms:
+  prefilter_noise:
+    type: "remap"
+    inputs:
+      - "cluster_logs"
+    source: |
+      # 1. Parse JSON if structured, else keep raw text
+      parsed, err = parse_json(.message)
+      if err == null {
+        . = merge(., parsed)
+      }
+
+      # 2. Always keep explicit error, critical, or threat keywords
+      if match(string!(.message), r'(?i)(error|critical|failed|unauthorized|denied|timeout|exploit)') {
+        .is_candidate = true
+      } else if match(string!(.message), r'(?i)(healthz|livez|readyz|kube-probe|heartbeat|routine)') {
+        # 3. Discard routine probes and heartbeats
+        abort
+      } else if .status == 200 || .status == 204 || .status == 304 {
+        # 4. Discard successful HTTP calls
+        abort
+      }
+
+sinks:
+  anomaly_detector_feed:
+    type: "http"
+    inputs:
+      - "prefilter_noise"
+    uri: "http://anomaly-detector-service:8080/ingest"
+    encoding:
+      codec: "json"

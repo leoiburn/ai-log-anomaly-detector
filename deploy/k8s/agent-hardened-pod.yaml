@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hardened-agent-template
+  namespace: agent-workloads
+  labels:
+    role: ai-agent
+  annotations:
+    # Physical bandwidth limit to prevent outbound volumetric DDoS bursts
+    kubernetes.io/egress-bandwidth: "5M"
+spec:
+  containers:
+    - name: agent-runtime
+      image: python:3.12-slim
+      command: ["python", "-c", "print('Agent running inside secured boundary')"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL # Drops CAP_NET_RAW, CAP_NET_ADMIN, CAP_SYS_ADMIN
+        runAsNonRoot: true
+        runAsUser: 10001
+      resources:
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+        requests:
+          cpu: "500m"
+          memory: "1Gi"

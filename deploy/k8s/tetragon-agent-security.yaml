@@ -1,0 +1,40 @@
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: block-agent-ssh-and-scanners
+  namespace: agent-workloads
+spec:
+  kprobes:
+    # 1. Kill unauthorized network tools (ssh, scp, nmap, hping3)
+    - call: "sys_execve"
+      syscall: true
+      args:
+        - index: 0
+          type: "string"
+      selectors:
+        - matchArgs:
+            - index: 0
+              operator: "Prefix"
+              values:
+                - "/usr/bin/ssh"
+                - "/usr/bin/scp"
+                - "/usr/bin/nmap"
+                - "/usr/bin/hping3"
+                - "/usr/bin/masscan"
+          matchActions:
+            - action: Sigkill
+
+    # 2. Kill raw socket creation attempts (blocks custom TCP SYN/UDP packet forging for DDoS)
+    - call: "sys_socket"
+      syscall: true
+      args:
+        - index: 1
+          type: "int" # Socket type parameter
+      selectors:
+        - matchArgs:
+            - index: 1
+              operator: "Equal"
+              values:
+                - "3" # SOCK_RAW in Linux kernel
+          matchActions:
+            - action: Sigkill
